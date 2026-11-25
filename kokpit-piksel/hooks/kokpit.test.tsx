@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 import type { Mood } from '../types'
 import { diffText } from './diff'
 import { fit, fitMiddle, measure, normalize, textPath } from './pixfont'
-import { describe as describeTool, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
+import { ctxCrossed, describe as describeTool, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
 import { scene } from './scene'
 import type { Costume } from './scene'
 import { SVG_LIMIT, screens } from './screen'
@@ -39,6 +39,7 @@ function engine(on: On) {
   const filled: string[] = []
   const toasts: string[] = []
   const store = new Map<string, unknown>()
+  const ctx = { percent: 12 }
   mock.clock(on, { now: NOW })
   on('store.get', (_, e) => ({ value: store.get(e.key) }))
   on('store.set', (_, e) => {
@@ -54,7 +55,7 @@ function engine(on: On) {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', () => ({
-    value: { startedAt: NOW - 60_000, context: { tokens: 24000, window: 1_000_000, percent: 12 }, rateLimits: [], cost: { usd: 0.25 } },
+    value: { startedAt: NOW - 60_000, context: { tokens: 24000, window: 1_000_000, percent: ctx.percent }, rateLimits: [], cost: { usd: 0.25 } },
   }))
   on('fs.exists', (_, e) => {
     seen.push(e.path)
@@ -70,7 +71,7 @@ function engine(on: On) {
     if (e.tool === 'Write') disk.set(norm(e.file_path), e.content)
     return { result: {} }
   })
-  return { disk, seen, filled, toasts, store }
+  return { disk, seen, filled, toasts, store, ctx }
 }
 
 /** `/kokpit <args>` as the person types it at the prompt. */
@@ -264,8 +265,8 @@ test('/kokpit kurs sets the rate; no daily limit is left anywhere', async ($, on
   await term.unmount()
 })
 
-test('/kokpit ringkasan sums the session up', async ($, on) => {
-  engine(on)
+test('/kokpit ringkasan sums the session up; a filling context earns one toast per mark', async ($, on) => {
+  const world = engine(on)
   await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Edit', file_path: FILE, old_string: 'const b = 2\nconst c = 3', new_string: 'const b = 20\nconst d = 4\nconst c = 3' })
   await $.tool.call({ tool: 'Bash', command: 'git push --force origin main' })
@@ -276,6 +277,21 @@ test('/kokpit ringkasan sums the session up', async ($, on) => {
   expect(sum).toContain('biaya Rp4.100')
   expect(sum).toContain('File: 1 berubah (+3 −2), 1 belum dicek')
   expect(sum).toContain('Perintah: 1 dijalankan, 1 berisiko')
+  expect(world.toasts.filter(t => t.includes('konteks'))).toEqual([])
+
+  // 12% → 85%: one warning; still 85%: none; 96%: the stronger one.
+  world.ctx.percent = 85
+  await $.command.run(typed('ringkasan'))
+  await $.command.run(typed('ringkasan'))
+  world.ctx.percent = 96
+  await $.command.run(typed('ringkasan'))
+  expect(world.toasts.filter(t => t.includes('konteks'))).toEqual([
+    'Kokpit: konteks sudah 85%, pertimbangkan /compact',
+    'Kokpit: konteks 96% hampir habis, jalankan /compact sekarang',
+  ])
+  expect(ctxCrossed(null, 50)).toBeNull()
+  expect(ctxCrossed(70, 99)).toBe(95)
+  expect(ctxCrossed(30, 12)).toBeNull()
 })
 
 test('the last seven days show as bars, kept across sessions in the store', async ($, on) => {

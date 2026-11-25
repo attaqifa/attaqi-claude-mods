@@ -333,8 +333,28 @@ export function lastDays(h: History, now: number, n: number) {
   })
 }
 
+/** Context shares that earn a toast the moment usage crosses them. */
+const CTX_WARN = [80, 95]
+
+/** The highest warning share crossed going from `before` to `after`, if any. */
+export function ctxCrossed(before: number | null, after: number | null) {
+  if (after === null) return null
+  const from = before ?? 0
+  return [...CTX_WARN].reverse().find(t => from < t && after >= t) ?? null
+}
+
 async function refreshUsage($: EngineInterface) {
   const u = await $.session.usage()
+  const before = (await read($, live)).ctxPercent
+  const after = u.context.percent ?? before
+  const crossed = ctxCrossed(before, after)
+  if (crossed !== null) {
+    $.ui.toast(
+      crossed >= 95
+        ? `Kokpit: konteks ${after}% hampir habis, jalankan /compact sekarang`
+        : `Kokpit: konteks sudah ${after}%, pertimbangkan /compact`,
+    )
+  }
   await update($, live, l => ({
     ...l,
     // The engine knows when the session began, even one begun before the mod loaded.
@@ -624,6 +644,13 @@ export const register: Register = on => {
     }
     return ran
   }).catch(($, e, next) => next(e))
+
+  // After /compact the context is smaller at once, not at the next turn's end.
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e)
+    if (e.agentId === undefined) await refreshUsage($).catch(() => undefined)
+    return r
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Code } = $.ui.resolve(e)
