@@ -5,7 +5,7 @@ import type { Change, Cmd, Daily, Focus, Game, Live, Mood, Prefs, Ui } from '../
 import { diffText } from './diff'
 import { ROOM, scene } from './scene'
 import type { Costume, SceneInput } from './scene'
-import { screen } from './screen'
+import { screens } from './screen'
 import type { CmdRow, FileRow } from './screen'
 
 const PANE = 'kokpit'
@@ -570,10 +570,12 @@ export const register: Register = on => {
       mood: l.mood,
       accent: meta.accent,
       hour: new Date(now).getHours(),
-      minute: new Date(now).getMinutes(),
+      // The wall clock moves in quarter hours, so the room is not redrawn every minute.
+      minute: Math.floor(new Date(now).getMinutes() / 15) * 15,
       name: info.name,
       title: meta.title,
-      detail: l.detail || m.label,
+      // Only the mood: the tool detail changes every call, and the HUD shows it.
+      detail: m.label,
     }
     const statusText = l.detail || m.label
     const ctxText = l.ctxPercent === null ? '–' : `${l.ctxPercent}%${l.ctxWindow ? ` dari ${short(l.ctxWindow)}` : ''}`
@@ -758,7 +760,7 @@ export const register: Register = on => {
       // The pane's width comes in code-font cells; about 7 CSS pixels each, kept on
       // the small side so the screen never runs past the pane's edge.
       const paneWidth = Math.max(ROOM.w * 2, Math.round((e.props.bodyColumns > 0 ? e.props.bodyColumns : 48) * CELL_PX))
-      const shot = screen({
+      const shot = screens({
         width: paneWidth,
         accent: meta.accent,
         room,
@@ -816,19 +818,39 @@ export const register: Register = on => {
               .join(', ') +
             (order.length > 8 ? `, dan ${order.length - 8} lagi.` : '.')
       const lastCmd = commands[0]
-      const alt =
+      const hudAlt =
         `${info.name}, Lv ${g.lv}. ${statusText}. Konteks ${ctxText}. ` +
-        `Token ${short(tokensTotal)}, sesi ${rp(l.usd)}, hari ini ${rp(todayUsd)}. ` +
+        `Token ${short(tokensTotal)}, sesi ${rp(l.usd)}, hari ini ${rp(todayUsd)}.`
+      const listAlt =
         (fo.path && l.isTurnRunning ? `Sedang dikerjakan: ${fo.path}. ` : '') +
         fileWords +
         (lastCmd
           ? ` Perintah terakhir: ${cut(firstLine(lastCmd.text), 60)}, ${lastCmd.ok === null ? 'berjalan' : lastCmd.ok ? 'berhasil' : 'gagal'}${lastCmd.risk ? `, ${lastCmd.risk}` : ''}.`
           : '')
 
+      // Heights must be given: left out, the desktop draws each frame short and
+      // shrinks the picture into it. Each picture's frame reloads, blank for a
+      // moment, only when its own markup changes.
+      const roomSvg = <Svg source={shot.room.source} alt={`${info.name} ${m.label.toLowerCase()}`} isInteractive height={shot.room.height} />
+      const hudSvg = <Svg source={shot.hud.source} alt={hudAlt} isInteractive height={shot.hud.height} />
+      const listSvg = <Svg source={shot.list.source} alt={listAlt} isInteractive height={shot.list.height} />
       return (
         <Box flexDirection="column" gap="sm">
-          {/* The height must be given: left out, the desktop draws the frame short and shrinks the screen into it. */}
-          <Svg source={shot.source} alt={alt} isInteractive height={shot.height} />
+          {shot.isWide ? (
+            <Box flexDirection="row" gap="sm" alignItems="flex-start">
+              <Box flexDirection="column">
+                {roomSvg}
+                {hudSvg}
+              </Box>
+              {listSvg}
+            </Box>
+          ) : (
+            <Box flexDirection="column">
+              {roomSvg}
+              {hudSvg}
+              {listSvg}
+            </Box>
+          )}
           {files.length > 0 && reviewBar()}
           {open && card(open)}
         </Box>

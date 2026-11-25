@@ -7,7 +7,8 @@ import { fit, fitMiddle, measure, normalize, textPath } from './pixfont'
 import { describe as describeTool, modelInfo, riskOf, rupiah, short, tagsFor, treeRows } from './register'
 import { scene } from './scene'
 import type { Costume } from './scene'
-import { SVG_LIMIT, screen } from './screen'
+import { SVG_LIMIT, screens } from './screen'
+import type { Stat } from './screen'
 import type { FileRow } from './screen'
 
 const PANE = {
@@ -82,8 +83,13 @@ const typed = (args: string) => ({
 
 /** The pixel screen on desktop: its markup and the words it says to a screen reader. */
 async function pixelScreen(ui: { findAll: (q: { type: 'Svg' }) => Promise<{ props: Record<string, unknown> }[]> }) {
-  const svg = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).includes(', Lv '))
-  return { source: String(svg?.props.source ?? ''), alt: String(svg?.props.alt ?? ''), height: Number(svg?.props.height ?? 0) }
+  // Room, HUD and list are three Svgs; together they are the screen.
+  const all = (await ui.findAll({ type: 'Svg' })).filter(s => String(s.props.source).includes('viewBox="0 0 170 '))
+  return {
+    source: all.map(s => String(s.props.source)).join(''),
+    alt: all.map(s => String(s.props.alt)).join(' '),
+    height: all.reduce((n, s) => n + Number(s.props.height ?? 0), 0),
+  }
 }
 
 test('an edit lands on the pixel screen and reviews below it, on desktop and terminal', async ($, on) => {
@@ -271,46 +277,56 @@ test('the pixel screen fits long inputs in both layouts and stays under the Svg 
           tip: long,
         },
   )
+  const input = (paneWidth: number, isRunning: boolean, tokens: string) => ({
+    width: paneWidth,
+    accent: '#1D9E75',
+    room: { costume: 'sonnet' as const, mood: 'write' as const, accent: '#1D9E75', hour: 21, minute: 9, name: 'Sonnet 5.5', title: 'Sang Penyair', detail: long },
+    hud: {
+      name: 'Sonnet 5.5 dengan nama yang sangat panjang sekali',
+      lv: 999,
+      xp: 1.7,
+      nameTip: 'Sonnet <b>',
+      glyph: '▶',
+      status: long,
+      statusTip: long,
+      tone: 'accent' as const,
+      isRunning,
+      ctx: { values: ['100% dari 1 jt', '100%'], share: 1.4, isHigh: true, tip: 'a' },
+      stats: [
+        { label: 'Token', values: [tokens], tip: 't' },
+        { label: 'Sesi', values: ['Rp123.456.789', 'Rp123,46 jt'], tip: 's', isMoney: true },
+        { label: 'Hari ini', values: ['Rp9.999.999', 'Rp10 jt'], tip: 'u', isMoney: true },
+      ] as [Stat, Stat, Stat],
+    },
+    files: { rows, added: 123456, removed: 98765, hasChanges: true, more: 3 },
+    cmds: [
+      { ok: true, text: long, isRisky: true, tip: long },
+      { ok: false, text: 'ls', isRisky: false, tip: 'ls' },
+      { ok: null, text: 'npm test', isRisky: false, tip: 'npm test' },
+    ],
+  })
   for (const [paneWidth, isWide] of [[336, false], [2000, true]] as const) {
     for (const isRunning of [true, false]) {
-      const shot = screen({
-        width: paneWidth,
-        accent: '#1D9E75',
-        room: { costume: 'sonnet', mood: 'write', accent: '#1D9E75', hour: 21, minute: 9, name: 'Sonnet 5.5', title: 'Sang Penyair', detail: long },
-        hud: {
-          name: 'Sonnet 5.5 dengan nama yang sangat panjang sekali',
-          lv: 999,
-          xp: 1.7,
-          nameTip: 'Sonnet <b>',
-          glyph: '▶',
-          status: long,
-          statusTip: long,
-          tone: 'accent',
-          isRunning,
-          ctx: { values: ['100% dari 1 jt', '100%'], share: 1.4, isHigh: true, tip: 'a' },
-          stats: [
-            { label: 'Token', values: ['999,99 jt'], tip: 't' },
-            { label: 'Sesi', values: ['Rp123.456.789', 'Rp123,46 jt'], tip: 's', isMoney: true },
-            { label: 'Hari ini', values: ['Rp9.999.999', 'Rp10 jt'], tip: 'u', isMoney: true },
-          ],
-        },
-        files: { rows, added: 123456, removed: 98765, hasChanges: true, more: 3 },
-        cmds: [
-          { ok: true, text: long, isRisky: true, tip: long },
-          { ok: false, text: 'ls', isRisky: false, tip: 'ls' },
-          { ok: null, text: 'npm test', isRisky: false, tip: 'npm test' },
-        ],
-      })
-      const svg = shot.source
-      expect(svg.startsWith('<svg')).toBe(true)
-      expect(svg.length).toBeLessThan(SVG_LIMIT)
-      expect(svg).not.toContain('<script')
-      expect(svg).not.toContain('<a & b>')
-      expect(svg).toContain('&lt;a &amp; b&gt;')
-      // Never wider than 3 screen pixels a cell; a narrower pane scales it down.
-      expect(shot.isWide).toBe(isWide)
-      expect(shot.width).toBe(isWide ? 1023 : 336)
-      expect(svg).toContain(`width="${shot.width}" height="${shot.height}"`)
+      const shots = screens(input(paneWidth, isRunning, '999,99 jt'))
+      expect(shots.isWide).toBe(isWide)
+      for (const shot of [shots.room, shots.hud, shots.list]) {
+        const svg = shot.source
+        expect(svg.startsWith('<svg')).toBe(true)
+        expect(svg.length).toBeLessThan(SVG_LIMIT)
+        expect(svg).not.toContain('<script')
+        expect(svg).not.toContain('<a & b>')
+        // Never wider than 3 screen pixels a cell; a narrower column scales it down.
+        expect(shot.width).toBe(isWide ? 510 : 336)
+        expect(svg).toContain(`width="${shot.width}" height="${shot.height}"`)
+      }
+      expect(shots.hud.source).toContain('&lt;a &amp; b&gt;')
+      expect(shots.list.source).toContain('&lt;a &amp; b&gt;')
+
+      // A new figure redraws the HUD alone: the room and the list keep their markup, so their frames do not blank.
+      const next = screens(input(paneWidth, isRunning, '1 jt'))
+      expect(next.hud.source).not.toBe(shots.hud.source)
+      expect(next.room.source).toBe(shots.room.source)
+      expect(next.list.source).toBe(shots.list.source)
     }
   }
 })

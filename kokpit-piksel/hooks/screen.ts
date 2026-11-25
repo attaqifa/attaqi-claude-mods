@@ -1,6 +1,6 @@
 // The whole pane as one pixel screen: the room on top, a console beneath it
 // with the HUD, the files Claude touched (the one it is on lit) and its last
-// commands. Narrow panes stack it all in one column; wide ones put the files
+// commands, drawn as three pictures. Narrow panes stack them; wide ones put the files
 // beside the room. Hover zones carry the full figures and paths as tooltips.
 
 import { FONT_CSS, LINE, fit, fitMiddle, measure, pixText } from './pixfont'
@@ -281,72 +281,64 @@ function cmdSection(o: string[], x: number, y: number, w: number, cmds: CmdRow[]
 /** Two columns once the pane gives every cell of them at least 2 CSS pixels. */
 const WIDE_AT = (COL * 2 + 1) * 2
 
-/** The markup and the size to draw it at, in CSS pixels. */
-export type Shot = { source: string; width: number; height: number; isWide: boolean }
+/** One picture's markup and the size to draw it at, in CSS pixels. */
+export type Shot = { source: string; width: number; height: number }
 
-function compose(s: ScreenInput, rows: FileRow[], more: number): Shot {
-  const isWide = s.width >= WIDE_AT
-  const room = sceneParts(s.room)
-  const roomH = Math.round(ROOM.h * ROOM_SCALE)
-  const files = { ...s.files, rows }
-  const o: string[] = []
-  const seam = (x: number, y: number) => o.push(rects([[x, y, COL, 1]], s.accent))
+/**
+ * The screen as three pictures: the room, the HUD, and the files with the
+ * commands. Each is redrawn by the desktop only when its own markup changes,
+ * so a new token count does not blank the room, nor a mood change the list.
+ */
+export type Screens = { isWide: boolean; room: Shot; hud: Shot; list: Shot }
 
-  let W = COL
-  let H = 0
-  if (!isWide) {
-    let y = roomH
-    seam(0, y)
-    y += 1
-    y += hudSection(o, 0, y, COL, s.hud, s.accent)
-    o.push(rects([[0, y, COL, 1]], INK.edge))
-    y += 1
-    y += filesSection(o, 0, y, COL, files, s.accent, s.hud.isRunning, more)
-    if (s.cmds.length > 0) {
-      o.push(rects([[0, y, COL, 1]], INK.edge))
-      y += 1
-      y += cmdSection(o, 0, y, COL, s.cmds)
-    }
-    H = y
-  } else {
-    W = COL * 2 + 1
-    let left = roomH
-    seam(0, left)
-    left += 1
-    left += hudSection(o, 0, left, COL, s.hud, s.accent)
-    let right = filesSection(o, COL + 1, 0, COL, files, s.accent, s.hud.isRunning, more)
-    if (s.cmds.length > 0) {
-      o.push(rects([[COL + 1, right, COL, 1]], INK.edge))
-      right += 1
-      right += cmdSection(o, COL + 1, right, COL, s.cmds)
-    }
-    H = Math.max(left, right)
-    o.push(rects([[COL, 0, 1, H]], INK.edge))
-  }
-
-  // As wide as the pane allows, between 1 and 3 CSS pixels a cell.
-  const scale = Math.min(3, Math.max(1, s.width / W))
+function wrap(W: number, H: number, colPx: number, css: string, defs: string, body: string): Shot {
+  // As wide as the column allows, between 1 and 3 CSS pixels a cell.
+  const scale = Math.min(3, Math.max(1, colPx / W))
   const width = Math.round(W * scale)
   const height = Math.round(H * scale)
   const source =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${width}" height="${height}" shape-rendering="crispEdges">` +
-    `<style>${room.css}${CSS}</style><defs>${room.defs}</defs>` +
-    `<rect width="${W}" height="${H}" fill="${INK.bg}"/>` +
-    `<g transform="scale(${ROOM_SCALE})">${room.body}</g>` +
-    `${o.join('')}</svg>`
-  return { source, width, height, isWide }
+    `<style>${css}</style>${defs ? `<defs>${defs}</defs>` : ''}` +
+    `<rect width="${W}" height="${H}" fill="${INK.bg}"/>${body}</svg>`
+  return { source, width, height }
 }
 
-/** The screen, the files list cut short if the whole would pass the limit. */
-export function screen(s: ScreenInput): Shot {
+function roomShot(s: ScreenInput, colPx: number): Shot {
+  const room = sceneParts(s.room)
+  const roomH = Math.round(ROOM.h * ROOM_SCALE)
+  const body = `<g transform="scale(${ROOM_SCALE})">${room.body}</g>` + rects([[0, roomH, COL, 1]], s.accent)
+  return wrap(COL, roomH + 1, colPx, room.css, room.defs, body)
+}
+
+function hudShot(s: ScreenInput, colPx: number): Shot {
+  const o: string[] = []
+  const h = hudSection(o, 0, 0, COL, s.hud, s.accent)
+  return wrap(COL, h, colPx, CSS, '', o.join(''))
+}
+
+function listOf(s: ScreenInput, rows: FileRow[], more: number, colPx: number): Shot {
+  const o: string[] = []
+  o.push(rects([[0, 0, COL, 1]], INK.edge))
+  let y = 1
+  y += filesSection(o, 0, y, COL, { ...s.files, rows }, s.accent, s.hud.isRunning, more)
+  if (s.cmds.length > 0) {
+    o.push(rects([[0, y, COL, 1]], INK.edge))
+    y += 1
+    y += cmdSection(o, 0, y, COL, s.cmds)
+  }
+  return wrap(COL, y, colPx, CSS, '', o.join(''))
+}
+
+/** The files and commands, the list cut short if it would pass the Svg limit. */
+function listShot(s: ScreenInput, colPx: number): Shot {
   const all = s.files.rows
-  const full = compose(s, all, s.files.more)
+  const full = listOf(s, all, s.files.more, colPx)
   if (full.source.length < SVG_LIMIT || all.length === 0) return full
 
   const filesIn = (rows: FileRow[]) => rows.filter(r => r.kind === 'file').length
   const withRows = (n: number) => {
     const rows = all.slice(0, n)
-    return compose(s, rows, s.files.more + filesIn(all) - filesIn(rows))
+    return listOf(s, rows, s.files.more + filesIn(all) - filesIn(rows), colPx)
   }
   // Guess from the average row how many fit, then step back until one does.
   const bare = withRows(0).source.length
@@ -358,4 +350,11 @@ export function screen(s: ScreenInput): Shot {
     shot = withRows(n)
   }
   return shot
+}
+
+/** Narrow panes stack the three; wide ones put the list beside the room and HUD. */
+export function screens(s: ScreenInput): Screens {
+  const isWide = s.width >= WIDE_AT
+  const colPx = isWide ? Math.floor((s.width - 8) / 2) : s.width
+  return { isWide, room: roomShot(s, colPx), hud: hudShot(s, colPx), list: listShot(s, colPx) }
 }
