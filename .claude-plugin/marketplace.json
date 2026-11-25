@@ -1,0 +1,5 @@
+{
+  "name": "attaqi-claude-mods",
+  "owner": { "name": "attaqi" },
+  "plugins": [{ "name": "kokpit-piksel", "source": "./kokpit-piksel" }]
+}

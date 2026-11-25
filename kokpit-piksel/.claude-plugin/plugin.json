@@ -1,0 +1,6 @@
+{
+  "name": "kokpit-piksel",
+  "version": "0.1.0",
+  "description": "Panel kokpit: maskot piksel berkostum per model, pelacak perubahan file, token, dan biaya dalam Rupiah.",
+  "types": "./types/index.d.ts"
+}
