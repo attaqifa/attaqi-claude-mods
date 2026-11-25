@@ -264,6 +264,20 @@ test('/kokpit kurs sets the rate; no daily limit is left anywhere', async ($, on
   await term.unmount()
 })
 
+test('/kokpit ringkasan sums the session up', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Edit', file_path: FILE, old_string: 'const b = 2\nconst c = 3', new_string: 'const b = 20\nconst d = 4\nconst c = 3' })
+  await $.tool.call({ tool: 'Bash', command: 'git push --force origin main' })
+
+  const sum = (await $.command.run(typed('ringkasan'))).text
+  expect(sum).toContain('Ringkasan sesi · Opus 5.5')
+  expect(sum).toContain('Durasi 1 mnt')
+  expect(sum).toContain('biaya Rp4.100')
+  expect(sum).toContain('File: 1 berubah (+3 −2), 1 belum dicek')
+  expect(sum).toContain('Perintah: 1 dijalankan, 1 berisiko')
+})
+
 test('the last seven days show as bars, kept across sessions in the store', async ($, on) => {
   const world = engine(on)
   world.store.set('history', { '2026-11-24': 1, '2026-11-01': 9 })

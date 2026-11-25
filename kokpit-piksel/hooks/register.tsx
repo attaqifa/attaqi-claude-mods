@@ -337,6 +337,8 @@ async function refreshUsage($: EngineInterface) {
   const u = await $.session.usage()
   await update($, live, l => ({
     ...l,
+    // The engine knows when the session began, even one begun before the mod loaded.
+    startedAt: u.startedAt > 0 ? u.startedAt : l.startedAt,
     usd: u.cost?.usd ?? l.usd,
     hasUnknownPrice: u.cost?.hasUnknownPrice === true,
     ctxPercent: u.context.percent ?? l.ctxPercent,
@@ -362,6 +364,62 @@ export function sparkline(values: number[]) {
   return values.map(v => (v <= 0 || top <= 0 ? '·' : BARS[Math.max(0, Math.ceil((v / top) * BARS.length) - 1)])).join('')
 }
 
+const span = (ms: number) => {
+  const mins = Math.max(0, Math.round(ms / 60000))
+  return mins < 60 ? `${mins} mnt` : `${Math.floor(mins / 60)} j ${mins % 60} mnt`
+}
+
+/**
+ * The changed files with their totals, and the ones still to check in review
+ * (explorer) order: a file is checked up to its latest edit.
+ */
+export function changedFiles(all: Change[], ok: Record<string, number>) {
+  const lastAt = new Map<string, number>()
+  let added = 0
+  let removed = 0
+  for (const c of all) {
+    lastAt.set(c.path, Math.max(lastAt.get(c.path) ?? 0, c.at))
+    added += c.added
+    removed += c.removed
+  }
+  const files = treeRows([...lastAt.keys()]).flatMap(r => (r.kind === 'file' ? [r.path] : []))
+  const pending = files.filter(path => (ok[path] ?? 0) < (lastAt.get(path) ?? 0))
+  return { files, pending, lastAt, added, removed }
+}
+
+/** `/kokpit ringkasan`: the session in a few lines. */
+export function summary(s: {
+  l: Live
+  all: Change[]
+  ok: Record<string, number>
+  commands: Cmd[]
+  kurs: number
+  history: History
+  now: number
+}) {
+  const rp = (usd: number) => rupiah(usd * s.kurs)
+  const { l } = s
+  const f = changedFiles(s.all, s.ok)
+  const failed = s.commands.filter(c => c.ok === false).length
+  const risky = s.commands.filter(c => c.risk !== null).length
+  const tokens = l.tokens.input + l.tokens.output + l.tokens.cacheRead + l.tokens.cacheWrite
+  const week = lastDays(s.history, s.now, 7).reduce((n, d) => n + d.usd, 0)
+  const today = s.history[dayKey(s.now)] ?? 0
+  return [
+    `Ringkasan sesi · ${modelInfo(l.model).name}`,
+    `Durasi ${span(s.now - (l.startedAt || s.now))} · ${l.turns} turn`,
+    `Token ${short(tokens)} · biaya ${rp(l.usd)}`,
+    `Hari ini ${rp(today)} · 7 hari ${rp(week)}`,
+    f.files.length === 0
+      ? 'File: belum ada yang berubah'
+      : `File: ${f.files.length} berubah (+${f.added} −${f.removed})${f.pending.length > 0 ? `, ${f.pending.length} belum dicek` : ', semua dicek'}`,
+    s.commands.length === 0
+      ? 'Perintah: belum ada'
+      : `Perintah: ${s.commands.length} dijalankan${failed > 0 ? `, ${failed} gagal` : ''}${risky > 0 ? `, ${risky} berisiko` : ''}`,
+    `Estimasi harga API dengan kurs ${rupiah(s.kurs)} per $, bukan tagihan.`,
+  ].join('\n')
+}
+
 // ---------- the mod ----------
 
 export const register: Register = on => {
@@ -369,8 +427,8 @@ export const register: Register = on => {
     root = e.cwd
     await $.command.register({
       name: 'kokpit',
-      description: 'Buka panel Kokpit Claude, atau ubah kurs Rupiah',
-      argumentHint: '[kurs 16400]',
+      description: 'Buka panel Kokpit Claude, lihat ringkasan sesi, atau ubah kurs Rupiah',
+      argumentHint: '[ringkasan | kurs 16400]',
     })
 
     const [savedPrefs, savedGame, savedHistory] = await Promise.all([
@@ -412,6 +470,19 @@ export const register: Register = on => {
       const next = await update($, prefs, () => ({ kurs: n }))
       await $.store.set('prefs', next)
       return { text: `Kurs disimpan: ${rupiah(n)} per $.` }
+    }
+    if (/^ringkasan\b/i.test(typed.trim())) {
+      await refreshUsage($).catch(() => undefined)
+      const [l, all, ok, commands, p, h, now] = await Promise.all([
+        read($, live),
+        read($, changes),
+        read($, checked),
+        read($, cmds),
+        read($, prefs),
+        read($, history),
+        $.clock.now(),
+      ])
+      return { text: summary({ l, all, ok, commands, kurs: p.kurs, history: h, now }) }
     }
     await $.ui.open({ id: PANE, title: TITLE })
     return { text: 'Panel Kokpit Claude dibuka.' }
