@@ -3,7 +3,8 @@
 // own: it sits on the band's background, left-aligned, as wide as what it says.
 // Drawn as a plain image (no frame, no hover); its markup changes only when one
 // of those changes, not on every tool call. What moves (the dots after
-// "Bekerja", the zzz, a drop of sweat) is CSS inside the image.
+// "Bekerja", the zzz, a drop of sweat) is CSS inside the image. In mode santai
+// a line of Claude's own goes first, at the left.
 
 import { CAP, FONT_CSS, fit, measure, pixText } from './pixfont'
 import { buddyParts } from './scene'
@@ -25,6 +26,8 @@ export type BandInput = {
   ctxPercent: number | null
   /** Files changed this session and their lines; nothing is drawn at 0 files. */
   files: { count: number; added: number; removed: number }
+  /** Mode santai: what Claude mutters, at the left; absent or '' for none. Drawn whole or not at all. */
+  quip?: string
 }
 
 export type BandShot = { source: string; width: number; height: number; alt: string }
@@ -39,6 +42,8 @@ const OX = 6
 const OY = 5
 /** After Claude and the room its zzz take. */
 const TEXT_X = OX + 29
+/** Cells from the end of mode santai's line to the strip's own left edge (the sweat drop sits 3 in). */
+const QUIP_GAP = 4
 
 // Colours for a dark band, with lighter-theme ones in case the app is light.
 // `w`/`d` stroke the text, `wf`/`df` fill the dots and the zzz, `e` an empty cell.
@@ -103,6 +108,7 @@ export function bandShot(s: BandInput): BandShot {
   // After the word: "konteks", ten cells, the share; then the files, if any.
   const pctText = pct === null ? '–' : `${pct}%`
   const label = 'konteks'
+  const labelW = measure(label) + 5
   const cells = 10
   const meterW = cells * 4 - 1
   const hasFiles = s.files.count > 0
@@ -111,11 +117,20 @@ export function bandShot(s: BandInput): BandShot {
   const delText = `-${s.files.removed}`
   const filesW = hasFiles ? 10 + measure(fileText) + 4 + measure(addText) + 3 + measure(delText) : 0
   const dotsW = s.state === 'work' ? 6 : 0
-  const tail = dotsW + 12 + measure(label) + 5 + meterW + 4 + measure(pctText) + filesW + 2
+  const bare = dotsW + 12 + meterW + 4 + measure(pctText) + filesW + 2
 
   const ty = Math.floor((H - CAP) / 2)
   const full = s.state === 'done' && s.note ? `${WORDS.done} · ${s.note}` : WORDS[s.state]
-  const word = fit(full, Math.max(24, maxW - TEXT_X - tail))
+
+  // Mode santai's line is never cut. Short of room, the "konteks" label goes
+  // first, then the turn note is cut, and only then is the line left out.
+  const quip = s.quip ?? ''
+  const quipW = quip ? 2 + measure(quip) + QUIP_GAP : 0
+  const fits = (withLabel: boolean, w: string) => quipW + TEXT_X + measure(w) + bare + (withLabel ? labelW : 0) <= maxW
+  const [lead, hasLabel] =
+    quipW === 0 ? [0, true] : fits(true, full) ? [quipW, true] : fits(false, WORDS[s.state]) ? [quipW, false] : [0, true]
+  const tail = bare + (hasLabel ? labelW : 0)
+  const word = fit(full, Math.max(24, maxW - lead - TEXT_X - tail))
   if (s.state === 'done') o.push(pixText(word, TEXT_X, ty, GREEN))
   else if (s.state === 'err') o.push(pixText(word, TEXT_X, ty, RED))
   else o.push(pixText(word, TEXT_X, ty, '#F1EFE8', s.state === 'work' ? 'w' : 'd'))
@@ -128,8 +143,10 @@ export function bandShot(s: BandInput): BandShot {
   }
 
   x += 12
-  o.push(pixText(label, x, ty, '#ABA8A1', 'd'))
-  x += measure(label) + 5
+  if (hasLabel) {
+    o.push(pixText(label, x, ty, '#ABA8A1', 'd'))
+    x += labelW
+  }
   const lit = pct === null ? 0 : Math.min(cells, Math.max(pct > 0 ? 1 : 0, Math.round((pct / 100) * cells)))
   for (let i = 0; i < cells; i++) o.push(px(x + i * 4, ty + 2, 3, 3, i >= lit ? 'e' : isHigh ? WARN : s.accent))
   x += meterW + 4
@@ -147,15 +164,18 @@ export function bandShot(s: BandInput): BandShot {
   }
 
   // Even, so the scaled width is whole pixels and the cells stay square.
-  const W = Math.ceil((x + 2) / 2) * 2
+  const W = Math.ceil((lead + x + 2) / 2) * 2
 
+  // The line at the left; the strip as it always is, moved over to make room.
+  const body = lead > 0 ? `${pixText(quip, 2, ty, '#ABA8A1', 'd')}<g transform="translate(${lead} 0)">${o.join('')}</g>` : o.join('')
   const width = W * SCALE
   const height = Math.round(H * SCALE)
   const source =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${width}" height="${height}" shape-rendering="crispEdges">` +
-    `<style>${FONT_CSS}${sprite.css}${CSS}</style>${o.join('')}</svg>`
+    `<style>${FONT_CSS}${sprite.css}${CSS}</style>${body}</svg>`
   const files = hasFiles ? ` ${s.files.count} file berubah, +${s.files.added} −${s.files.removed}.` : ''
-  const alt = `${s.name} · ${full}. Konteks ${pct === null ? 'belum diketahui' : `${pct}%`}.${files}`
+  const said = lead > 0 ? ` Celetuk: ${quip}.` : ''
+  const alt = `${s.name} · ${full}. Konteks ${pct === null ? 'belum diketahui' : `${pct}%`}.${files}${said}`
   return { source, width, height, alt }
 }
 

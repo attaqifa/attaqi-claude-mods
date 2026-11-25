@@ -6,6 +6,7 @@ import { bandShot, bandState } from './band'
 import { diffText } from './diff'
 import { fit, fitMiddle, measure, normalize, textPath } from './pixfont'
 import { ctxCrossed, describe as describeTool, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
+import { QUIPS, quipFor } from './santai'
 import { scene } from './scene'
 import type { Costume } from './scene'
 import { SVG_LIMIT, screens } from './screen'
@@ -246,7 +247,7 @@ test('/kokpit kurs sets the rate; no daily limit is left anywhere', async ($, on
 
   const set = await $.command.run(typed('kurs 15.000'))
   expect(set.text).toBe('Kurs disimpan: Rp15.000 per $.')
-  expect(world.store.get('prefs')).toEqual({ kurs: 15000 })
+  expect(world.store.get('prefs')).toEqual({ kurs: 15000, isSantai: false })
   expect((await pixelScreen(ui)).alt).toContain('sesi Rp3.750')
   // The price note rides on the figures' tooltips.
   expect((await pixelScreen(ui)).source).toContain('Kurs Rp15.000 per $, ubah dengan /kokpit kurs 16400')
@@ -394,6 +395,86 @@ test('the strip: every costume and state fits, the turn note after Selesai', () 
   expect(bandState('think', false)).toBe('idle')
   expect(bandState('done', false)).toBe('done')
   expect(bandState('err', true)).toBe('err')
+})
+
+const STATES = ['idle', 'work', 'done', 'err'] as const
+
+test('/kokpit santai: off at first, Claude mutters at the left when on, kept across a reload', async ($, on) => {
+  const world = engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  const strip = async (over: { isWorking?: boolean } = {}) => {
+    const ui = await $.ui.mount(BAND('desktop', over))
+    const p = (await ui.findAll({ type: 'Svg' }))[0]?.props ?? {}
+    await ui.unmount()
+    return { source: String(p.source), alt: String(p.alt), width: Number(p.width) }
+  }
+  const lineIn = (alt: string) => /Celetuk: (.+)\.$/.exec(alt)?.[1]
+  const plain = await strip()
+  expect(lineIn(plain.alt)).toBeUndefined()
+  expect((await $.command.run(typed('santai'))).text).toBe('Mode santai sedang mati. Nyalakan dengan /kokpit santai on.')
+
+  expect((await $.command.run(typed('santai on'))).text).toBe('Mode santai nyala: Claude nyeletuk di strip atas prompt.')
+  expect(world.store.get('prefs')).toEqual({ kurs: 16400, isSantai: true })
+  const idle = await strip()
+  expect(QUIPS.idle).toContain(lineIn(idle.alt))
+  expect(idle.alt.startsWith(plain.alt)).toBe(true)
+  // The strip as it was, moved over: wider by the line, still in its 21px.
+  expect(idle.width).toBeGreaterThan(plain.width)
+  expect(idle.source).toContain('<g transform="translate(')
+
+  // Through a turn the line holds while the tools come and go.
+  const busy = await strip({ isWorking: true })
+  const said = lineIn(busy.alt) ?? ''
+  expect(QUIPS.work.map(l => (typeof l === 'string' ? l : l({ turns: 0 })))).toContain(said)
+  await $.tool.call({ tool: 'Read', file_path: FILE })
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  expect((await strip({ isWorking: true })).source).toBe(busy.source)
+
+  // A reload keeps it on; `off` takes the line away.
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  expect((await $.command.run(typed('santai'))).text).toBe('Mode santai sedang nyala. Matikan dengan /kokpit santai off.')
+  expect((await $.command.run(typed('santai entah'))).text).toBe('Pakai /kokpit santai on atau /kokpit santai off.')
+  expect((await $.command.run(typed('santai mati'))).text).toBe('Mode santai mati.')
+  expect(world.store.get('prefs')).toEqual({ kurs: 16400, isSantai: false })
+  expect((await strip()).source).toBe(plain.source)
+})
+
+test('mode santai lines: one per state and turn, never cut, every glyph drawn', () => {
+  const seed = NOW - 60_000
+  for (const state of STATES) {
+    const lines = QUIPS[state]
+    for (let turns = 0; turns < 12; turns++) {
+      const line = quipFor(state, turns, seed)
+      expect(line).toBe(quipFor(state, turns, seed))
+      // The pixel font draws what it lacks as '?': no line needs that.
+      expect(normalize(line)).not.toContain('?')
+      expect(line.length).toBeLessThanOrEqual(40)
+      if (lines.length > 1) expect(quipFor(state, turns + 1, seed)).not.toBe(line)
+    }
+  }
+  expect(quipFor('err', 5, seed)).toBe('bukan aku mas, promptnya')
+  expect(QUIPS.work.some(l => typeof l === 'function' && l({ turns: 2 }) === 'minum air bersih, gelas ke-3')).toBe(true)
+
+  // Short of room the label goes first, then the line; a line is never cut.
+  const quip = 'udah jadi. jangan dites di depan saya'
+  const base = { costume: 'opus', accent: '#7F77DD', name: 'Opus 5.5', note: '', ctxPercent: 40, files: { count: 2, added: 9, removed: 1 } } as const
+  const roomy = bandShot({ ...base, width: 1400, state: 'idle', quip })
+  expect(roomy.alt.endsWith(`Celetuk: ${quip}.`)).toBe(true)
+  let tightest = 0
+  for (let width = 400; width <= 1400; width += 3) {
+    const s = bandShot({ ...base, width, state: 'idle', quip })
+    expect(s.width).toBeLessThanOrEqual(width)
+    if (tightest === 0 && s.alt.includes('Celetuk')) tightest = width
+  }
+  expect(tightest).toBeGreaterThan(0)
+  expect(bandShot({ ...base, width: tightest, state: 'idle', quip }).width).toBeLessThan(roomy.width)
+  expect(bandShot({ ...base, width: 400, state: 'idle', quip }).alt).not.toContain('Celetuk')
+  for (const state of STATES) {
+    const s = bandShot({ ...base, width: 1400, state, note: '42 dtk · Rp1.200', quip: quipFor(state, 3, seed) })
+    expect(s.source.length).toBeLessThan(SVG_LIMIT)
+    expect(s.height).toBe(21)
+    expect(Number.isInteger(s.width)).toBe(true)
+  }
 })
 
 test('the last seven days show as bars, kept across sessions in the store', async ($, on) => {

@@ -58,8 +58,8 @@ export type Focus = { path: string; mood: Mood; at: number; recent: string[] }
 /** The file whose changes are open for review, if any. */
 export type Ui = { open: string | null }
 
-/** Rupiah per dollar, set with `/kokpit kurs 16400`. */
-export type Prefs = { kurs: number }
+/** Rupiah per dollar, set with `/kokpit kurs 16400`; mode santai, `/kokpit santai on`, off at first. */
+export type Prefs = { kurs: number; isSantai: boolean }
 
 export type Game = { xp: number; lv: number }
 

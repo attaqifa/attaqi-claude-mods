@@ -6,6 +6,7 @@ import { diffText } from './diff'
 import { ROOM, scene } from './scene'
 import type { Costume, SceneInput } from './scene'
 import { bandShot, bandState } from './band'
+import { quipFor } from './santai'
 import { screens } from './screen'
 import type { CmdRow, FileRow } from './screen'
 
@@ -41,7 +42,7 @@ const checked = atom({ plugin: 'kokpit-piksel', key: 'checked' } as const, {} as
 const cmds = atom({ plugin: 'kokpit-piksel', key: 'cmds' } as const, [] as Cmd[], { shape: 'cmds-1' })
 const focus = atom({ plugin: 'kokpit-piksel', key: 'focus' } as const, { path: '', mood: 'idle', at: 0, recent: [] } as Focus, { shape: 'focus-1' })
 const ui = atom({ plugin: 'kokpit-piksel', key: 'ui' } as const, { open: null } as Ui, { shape: 'ui-3' })
-const prefs = atom({ plugin: 'kokpit-piksel', key: 'prefs' } as const, { kurs: 16400 } as Prefs, { shape: 'prefs-2' })
+const prefs = atom({ plugin: 'kokpit-piksel', key: 'prefs' } as const, { kurs: 16400, isSantai: false } as Prefs, { shape: 'prefs-3' })
 const game = atom({ plugin: 'kokpit-piksel', key: 'game' } as const, { xp: 0, lv: 1 } as Game, { shape: 'game-1' })
 const NO_DAY: Daily = { day: '', usd: 0, seen: {} }
 const daily = atom({ plugin: 'kokpit-piksel', key: 'daily' } as const, NO_DAY, { shape: 'daily-3' })
@@ -448,8 +449,8 @@ export const register: Register = on => {
     root = e.cwd
     await $.command.register({
       name: 'kokpit',
-      description: 'Buka panel Kokpit Claude, lihat ringkasan sesi, atau ubah kurs Rupiah',
-      argumentHint: '[ringkasan | kurs 16400]',
+      description: 'Buka panel Kokpit Claude, lihat ringkasan sesi, ubah kurs Rupiah, atau nyalakan mode santai',
+      argumentHint: '[ringkasan | kurs 16400 | santai on/off]',
     })
 
     const [savedPrefs, savedGame, savedHistory] = await Promise.all([
@@ -458,11 +459,11 @@ export const register: Register = on => {
       $.store.get('history').catch(() => undefined),
     ])
     if (isHistory(savedHistory)) await update($, history, () => savedHistory)
-    // An older save may still carry a daily limit beside the rate: only the rate is kept.
+    // An older save may still carry a daily limit beside the rate, and no mode santai: only those two are kept.
     const isPrefs = (v: unknown): v is Prefs => typeof v === 'object' && v !== null && typeof (v as Prefs).kurs === 'number'
     const isGame = (v: unknown): v is Game =>
       typeof v === 'object' && v !== null && typeof (v as Game).xp === 'number' && typeof (v as Game).lv === 'number'
-    if (isPrefs(savedPrefs)) await update($, prefs, () => ({ kurs: savedPrefs.kurs }))
+    if (isPrefs(savedPrefs)) await update($, prefs, () => ({ kurs: savedPrefs.kurs, isSantai: savedPrefs.isSantai === true }))
     if (isGame(savedGame)) await update($, game, () => savedGame)
 
     const now = await $.clock.now()
@@ -488,9 +489,27 @@ export const register: Register = on => {
       if (!Number.isFinite(n) || n < 1000 || n > 100000) {
         return { text: 'Kurs harus antara 1.000 dan 100.000, misalnya /kokpit kurs 16400.' }
       }
-      const next = await update($, prefs, () => ({ kurs: n }))
+      const next = await update($, prefs, x => ({ ...x, kurs: n }))
       await $.store.set('prefs', next)
       return { text: `Kurs disimpan: ${rupiah(n)} per $.` }
+    }
+    // `/kokpit santai on` / `off` turns Claude's lines in the strip on or off, `/kokpit santai` says which.
+    const santai = /^santai\b\s*(.*)$/i.exec(typed.trim())
+    if (santai) {
+      const said = (santai[1] ?? '').trim().toLowerCase()
+      const isOn = /^(on|nyala|ya)$/.test(said) ? true : /^(off|mati|tidak)$/.test(said) ? false : null
+      if (isOn === null) {
+        if (said !== '') return { text: 'Pakai /kokpit santai on atau /kokpit santai off.' }
+        const p = await read($, prefs)
+        return {
+          text: p.isSantai
+            ? 'Mode santai sedang nyala. Matikan dengan /kokpit santai off.'
+            : 'Mode santai sedang mati. Nyalakan dengan /kokpit santai on.',
+        }
+      }
+      const next = await update($, prefs, x => ({ ...x, isSantai: isOn }))
+      await $.store.set('prefs', next)
+      return { text: isOn ? 'Mode santai nyala: Claude nyeletuk di strip atas prompt.' : 'Mode santai mati.' }
     }
     if (/^ringkasan\b/i.test(typed.trim())) {
       await refreshUsage($).catch(() => undefined)
@@ -657,7 +676,7 @@ export const register: Register = on => {
   // context meter and the files changed. Surfaces without Svg (the terminal) get nothing.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || e.surface === 'terminal') return next(e)
-    const [l, all] = await Promise.all([read($, live), read($, changes)])
+    const [l, all, p] = await Promise.all([read($, live), read($, changes), read($, prefs)])
     const f = changedFiles(all, {})
     const info = modelInfo(l.model)
     const state = bandState(l.mood, e.props.isWorking || l.isTurnRunning)
@@ -670,6 +689,8 @@ export const register: Register = on => {
       note: state === 'done' ? l.detail : '',
       ctxPercent: l.ctxPercent,
       files: { count: f.files.length, added: f.added, removed: f.removed },
+      // Turns, not tool calls: the line holds through a turn and changes with the next.
+      quip: p.isSantai ? quipFor(state, l.turns, l.startedAt) : '',
     })
     const { Svg } = $.ui.resolve(e)
     // A plain image: no frame to reload, so a change swaps the picture.
