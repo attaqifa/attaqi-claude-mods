@@ -318,13 +318,12 @@ function eyesDefault(mood: Mood): [number, number] {
   return [0, 0]
 }
 
-function buddy(b: Pix, s: SceneInput) {
-  const ox = OX
-  const oy = OY
+/** Claude with its costume, body top-left at (ox, oy); `isSmall` leaves out the floor shadow and the thought bubble. */
+function buddy(b: Pix, s: SceneInput, ox = OX, oy = OY, isSmall = false) {
   const { mood, costume } = s
   const a = s.accent
 
-  b.r(OX + 2, 37, 12, 1, '.shd')
+  if (!isSmall) b.r(ox + 2, oy + 12, 12, 1, '.shd')
 
   b.g('jump', () =>
     b.g(`mv mv-${mood}`, () => {
@@ -566,7 +565,7 @@ function buddy(b: Pix, s: SceneInput) {
           b.p(mx - 2, my + 5, '#5F5E5A')
         })
       }
-      if (mood === 'think') {
+      if (mood === 'think' && !isSmall) {
         b.p(ox + 14, oy - 3, '.sm')
         b.r(ox + 15, oy - 6, 2, 2, '.sm')
         const bx = ox + 14
@@ -679,6 +678,13 @@ export function sceneParts(s: SceneInput): { css: string; defs: string; body: st
     defs: '<clipPath id="win"><rect x="5" y="5" width="14" height="10"/></clipPath>',
     body: b.out.join(''),
   }
+}
+
+/** Claude alone, for a strip outside the room: its style and its pixels. */
+export function buddyParts(s: SceneInput, ox: number, oy: number): { css: string; body: string } {
+  const b = new Pix()
+  buddy(b, s, ox, oy, true)
+  return { css: BASE_CSS + b.css.join(''), body: b.out.join('') }
 }
 
 export function scene(s: SceneInput): string {

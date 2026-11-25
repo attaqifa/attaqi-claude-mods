@@ -5,6 +5,7 @@ import type { Change, Cmd, Daily, Focus, Game, History, Live, Mood, Prefs, Ui } 
 import { diffText } from './diff'
 import { ROOM, scene } from './scene'
 import type { Costume, SceneInput } from './scene'
+import { bandShot, bandState } from './band'
 import { screens } from './screen'
 import type { CmdRow, FileRow } from './screen'
 
@@ -650,6 +651,27 @@ export const register: Register = on => {
     const r = await next(e)
     if (e.agentId === undefined) await refreshUsage($).catch(() => undefined)
     return r
+  })
+
+  // Above the prompt: a thin pixel strip, Claude small with one word and the
+  // context meter. Surfaces without Svg (the terminal) get nothing.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || e.surface === 'terminal') return next(e)
+    const l = await read($, live)
+    const info = modelInfo(l.model)
+    const state = bandState(l.mood, e.props.isWorking || l.isTurnRunning)
+    const shot = bandShot({
+      width: Math.round((e.props.bodyColumns > 0 ? e.props.bodyColumns : 60) * CELL_PX),
+      costume: info.costume,
+      accent: MODELS[info.costume].accent,
+      name: info.name,
+      state,
+      note: state === 'done' ? l.detail : '',
+      ctxPercent: l.ctxPercent,
+    })
+    const { Svg } = $.ui.resolve(e)
+    // A plain image: no frame to reload, so a change swaps the picture.
+    return <Svg source={shot.source} alt={shot.alt} width={shot.width} height={shot.height} />
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

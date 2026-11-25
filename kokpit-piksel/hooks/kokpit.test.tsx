@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import type { Mood } from '../types'
+import { bandShot, bandState } from './band'
 import { diffText } from './diff'
 import { fit, fitMiddle, measure, normalize, textPath } from './pixfont'
 import { ctxCrossed, describe as describeTool, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
@@ -292,6 +293,92 @@ test('/kokpit ringkasan sums the session up; a filling context earns one toast p
   expect(ctxCrossed(null, 50)).toBeNull()
   expect(ctxCrossed(70, 99)).toBe(95)
   expect(ctxCrossed(30, 12)).toBeNull()
+})
+
+const BAND = (surface: 'desktop' | 'terminal', over: { isWorking?: boolean; hasSurvey?: boolean } = {}) =>
+  ({
+    plugin: 'kokpit-piksel',
+    component: 'AbovePrompt',
+    surface,
+    props: {
+      hasSurvey: over.hasSurvey ?? false,
+      isCollapsed: false,
+      isWorking: over.isWorking ?? false,
+      maxRows: 10,
+      bodyColumns: 80,
+      scroll: { offset: 0, bodyRows: 9 },
+      view: {},
+    },
+  }) as const
+
+test('the strip above the prompt: Claude small, one word, the context; still through a turn', async ($, on) => {
+  const world = engine(on)
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  const strip = async (ui: { findAll: (q: { type: 'Svg' }) => Promise<{ props: Record<string, unknown> }[]> }) => {
+    const all = await ui.findAll({ type: 'Svg' })
+    expect(all.length).toBe(1)
+    const p = all[0]?.props ?? {}
+    return { source: String(p.source), alt: String(p.alt), isInteractive: p.isInteractive, width: Number(p.width), height: Number(p.height) }
+  }
+
+  const idle = await $.ui.mount(BAND('desktop'))
+  const at = await strip(idle)
+  expect(at.alt).toBe('Opus 5.5 · Santai. Konteks 12%.')
+  // A plain image, its size given: no frame to blank on a change.
+  expect(at.isInteractive).toBeUndefined()
+  expect(at.height).toBe(21)
+  // As wide as what it says, left-aligned, never past the band.
+  expect(at.width).toBeLessThan(400)
+  expect(at.source).not.toContain('<script')
+  await idle.unmount()
+
+  // Through a turn, reading then editing then running draw one and the same strip.
+  const busy = await $.ui.mount(BAND('desktop', { isWorking: true }))
+  const first = await strip(busy)
+  expect(first.alt).toBe('Opus 5.5 · Bekerja. Konteks 12%.')
+  await $.tool.call({ tool: 'Read', file_path: FILE })
+  await $.tool.call({ tool: 'Edit', file_path: FILE, old_string: 'const b = 2', new_string: 'const b = 20' })
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  expect((await strip(busy)).source).toBe(first.source)
+  await busy.unmount()
+
+  // A context near full turns the meter amber.
+  world.ctx.percent = 85
+  await $.command.run(typed('ringkasan'))
+  const full = await $.ui.mount(BAND('desktop'))
+  expect((await strip(full)).alt).toContain('Konteks 85%')
+  expect((await strip(full)).source).toContain('#E8A33A')
+  await full.unmount()
+
+  // Nothing where Svg is not drawn, nor over a survey.
+  const term = await $.ui.mount(BAND('terminal'))
+  expect(await term.find({ type: 'Text' })).toBeUndefined()
+  await term.unmount()
+  const survey = await $.ui.mount(BAND('desktop', { hasSurvey: true }))
+  expect(await survey.find({ type: 'Svg' })).toBeUndefined()
+  await survey.unmount()
+})
+
+test('the strip: every costume and state fits, the turn note after Selesai', () => {
+  const costumes: Costume[] = ['opus', 'sonnet', 'haiku', 'fable', 'claude']
+  for (const costume of costumes) {
+    for (const state of ['idle', 'work', 'done', 'err'] as const) {
+      for (const width of [100, 400, 1400]) {
+        const s = bandShot({ width, costume, accent: '#7F77DD', name: 'Sonnet 5.5', state, note: '42 dtk · Rp1.200', ctxPercent: 100 })
+        expect(s.source.length).toBeLessThan(SVG_LIMIT)
+        expect(s.height).toBe(21)
+        expect(Number.isInteger(s.width)).toBe(true)
+        if (width >= 400) expect(s.width).toBeLessThanOrEqual(width)
+      }
+    }
+  }
+  expect(bandShot({ width: 560, costume: 'opus', accent: '#7F77DD', name: 'Opus 5.5', state: 'done', note: '42 dtk · Rp1.200', ctxPercent: null }).alt).toBe(
+    'Opus 5.5 · Selesai · 42 dtk · Rp1.200. Konteks belum diketahui.',
+  )
+  expect(bandState('write', true)).toBe('work')
+  expect(bandState('think', false)).toBe('idle')
+  expect(bandState('done', false)).toBe('done')
+  expect(bandState('err', true)).toBe('err')
 })
 
 test('the last seven days show as bars, kept across sessions in the store', async ($, on) => {
