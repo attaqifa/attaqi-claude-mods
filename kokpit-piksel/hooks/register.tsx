@@ -1087,12 +1087,14 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" gap="sm">
           {shot.isWide ? (
+            // Wide: the room on the left, the figures read most often at the
+            // top of the right column with the files and commands under them.
             <Box flexDirection="row" gap="sm" alignItems="flex-start">
+              {roomSvg}
               <Box flexDirection="column">
-                {roomSvg}
                 {hudSvg}
+                {listSvg}
               </Box>
-              {listSvg}
             </Box>
           ) : (
             <Box flexDirection="column">

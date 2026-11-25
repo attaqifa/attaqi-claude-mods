@@ -1,7 +1,7 @@
 // The whole pane as one pixel screen: the room on top, a console beneath it
 // with the HUD, the files Claude touched (the one it is on lit) and its last
-// commands, drawn as three pictures. Narrow panes stack them; wide ones put the files
-// beside the room. Hover zones carry the full figures and paths as tooltips.
+// commands, drawn as three pictures. Narrow panes stack them; wide ones put the
+// HUD and the files beside the room. Hover zones carry the full figures and paths as tooltips.
 
 import { FONT_CSS, LINE, fit, fitMiddle, measure, pixText } from './pixfont'
 import { ROOM, sceneParts } from './scene'
@@ -182,13 +182,18 @@ function hudSection(o: string[], x: number, y: number, w: number, h: Hud, accent
   o.push(dots(x + P, cy, w - P * 2))
   cy += 6
 
-  // Three figures in columns.
+  // Three figures in columns; the last sits flush right, on the same edge as
+  // the context and week figures above and below it.
   const gap = 6
   const colW = Math.floor((w - P * 2 - gap * 2) / 3)
+  const right = x + w - P
   h.stats.forEach((st, i) => {
     const sx = x + P + i * (colW + gap)
-    o.push(pixText(fit(st.label, colW), sx, cy, INK.dim))
-    o.push(pixText(pick(st.values, colW), sx, cy + LINE, st.isMoney ? INK.gold : INK.text))
+    const isLast = i === h.stats.length - 1
+    const label = fit(st.label, colW)
+    const value = pick(st.values, colW)
+    o.push(pixText(label, isLast ? right - measure(label) : sx, cy, INK.dim))
+    o.push(pixText(value, isLast ? right - measure(value) : sx, cy + LINE, st.isMoney ? INK.gold : INK.text))
     o.push(zone(sx - 3, cy - 2, colW + 6, LINE * 2 + 2, st.tip))
   })
   cy += LINE * 2 + 4
@@ -390,7 +395,7 @@ function listShot(s: ScreenInput, colPx: number): Shot {
   return shot
 }
 
-/** Narrow panes stack the three; wide ones put the list beside the room and HUD. */
+/** Narrow panes stack the three; wide ones put the HUD and list beside the room. */
 export function screens(s: ScreenInput): Screens {
   const isWide = s.width >= WIDE_AT
   const colPx = isWide ? Math.floor((s.width - 8) / 2) : s.width
