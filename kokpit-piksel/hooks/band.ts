@@ -24,6 +24,10 @@ export type BandInput = {
   /** After `done`: how long the turn took and what it cost. */
   note: string
   ctxPercent: number | null
+  /** Where auto-compaction runs on the same scale, marked on the meter; absent or null when off. */
+  ctxMark?: number | null
+  /** Amber and sweat; absent, from `ctxPercent` alone (80% and up). */
+  isCtxHigh?: boolean
   /** Files changed this session and their lines; nothing is drawn at 0 files. */
   files: { count: number; added: number; removed: number }
   /** Mode santai: what Claude mutters, at the left; absent or '' for none. Drawn whole or not at all. */
@@ -101,7 +105,8 @@ export function bandShot(s: BandInput): BandShot {
   o.push(sprite.body)
 
   const pct = s.ctxPercent
-  const isHigh = pct !== null && pct >= 80
+  const isHigh = s.isCtxHigh ?? (pct !== null && pct >= 80)
+  const mark = s.ctxMark ?? null
   if (s.state === 'idle') o.push(zzz())
   if (isHigh) o.push(sweat())
 
@@ -149,6 +154,12 @@ export function bandShot(s: BandInput): BandShot {
   }
   const lit = pct === null ? 0 : Math.min(cells, Math.max(pct > 0 ? 1 : 0, Math.round((pct / 100) * cells)))
   for (let i = 0; i < cells; i++) o.push(px(x + i * 4, ty + 2, 3, 3, i >= lit ? 'e' : isHigh ? WARN : s.accent))
+  // Auto-compaction's spot: a tick above and below the meter, amber, red once the context reaches it.
+  if (mark !== null) {
+    const mx = x + Math.min(meterW - 1, Math.round((mark / 100) * meterW))
+    const tick = pct !== null && pct >= mark ? RED : WARN
+    o.push(px(mx, ty, 1, 2, tick), px(mx, ty + 5, 1, 2, tick))
+  }
   x += meterW + 4
   o.push(isHigh ? pixText(pctText, x, ty, WARN) : pixText(pctText, x, ty, '#ABA8A1', 'd'))
   x += measure(pctText)
@@ -175,7 +186,8 @@ export function bandShot(s: BandInput): BandShot {
     `<style>${FONT_CSS}${sprite.css}${CSS}</style>${body}</svg>`
   const files = hasFiles ? ` ${s.files.count} file berubah, +${s.files.added} −${s.files.removed}.` : ''
   const said = lead > 0 ? ` Celetuk: ${quip}.` : ''
-  const alt = `${s.name} · ${full}. Konteks ${pct === null ? 'belum diketahui' : `${pct}%`}.${files}${said}`
+  const auto = mark !== null ? ` Autocompact di ${mark}%.` : ''
+  const alt = `${s.name} · ${full}. Konteks ${pct === null ? 'belum diketahui' : `${pct}%`}.${auto}${files}${said}`
   return { source, width, height, alt }
 }
 

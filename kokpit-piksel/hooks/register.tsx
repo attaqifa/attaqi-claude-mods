@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Change, Cmd, Daily, Focus, Game, History, Live, Mood, Prefs, Ui } from '../types'
+import type { Change, Cmd, CtxAuto, Daily, Focus, Game, History, Live, Mood, Prefs, Ui } from '../types'
 import { diffText } from './diff'
 import { ROOM, scene } from './scene'
 import type { Costume, SceneInput } from './scene'
@@ -47,6 +47,7 @@ const game = atom({ plugin: 'kokpit-piksel', key: 'game' } as const, { xp: 0, lv
 const NO_DAY: Daily = { day: '', usd: 0, seen: {} }
 const daily = atom({ plugin: 'kokpit-piksel', key: 'daily' } as const, NO_DAY, { shape: 'daily-3' })
 const history = atom({ plugin: 'kokpit-piksel', key: 'history' } as const, {} as History, { shape: 'history-1' })
+const ctxAuto = atom({ plugin: 'kokpit-piksel', key: 'ctxAuto' } as const, { mark: null, toCompact: null } as CtxAuto, { shape: 'ctxauto-1' })
 
 // ---------- words and numbers ----------
 
@@ -345,16 +346,43 @@ export function ctxCrossed(before: number | null, after: number | null) {
   return [...CTX_WARN].reverse().find(t => from < t && after >= t) ?? null
 }
 
+/**
+ * The context against the model's whole window, as the status line has it,
+ * and where auto-compaction runs on that scale (`mark`, null when it is off).
+ * `toCompact` is the way to that mark: the warnings count by it.
+ */
+export function ctxShare(c: { tokens?: number; window: number; percent?: number; breakdown?: { isAutoCompactEnabled: boolean; autoCompactThreshold?: number } }) {
+  const at = c.breakdown?.isAutoCompactEnabled ? c.breakdown.autoCompactThreshold : undefined
+  const hasMark = at !== undefined && at > 0 && c.window > 0
+  return {
+    percent: c.percent,
+    window: c.window,
+    mark: hasMark ? Math.min(100, Math.round((at / c.window) * 100)) : null,
+    toCompact: hasMark && c.tokens !== undefined ? Math.min(100, Math.round((c.tokens / at) * 100)) : null,
+  }
+}
+
+/** Amber and a drop of sweat: near the auto-compact mark when there is one, else near full. */
+export const isCtxHigh = (percent: number | null, toCompact: number | null) => (toCompact ?? percent ?? 0) >= 80
+
 async function refreshUsage($: EngineInterface) {
-  const u = await $.session.usage()
-  const before = (await read($, live)).ctxPercent
-  const after = u.context.percent ?? before
+  // `summary` counts locally, no request: it is here for the auto-compact threshold.
+  const u = await $.session.usage({ breakdown: 'summary' })
+  const ctx = ctxShare(u.context)
+  const was = await read($, ctxAuto)
+  const before = was.toCompact ?? (await read($, live)).ctxPercent
+  const after = ctx.toCompact ?? ctx.percent ?? before
+  await update($, ctxAuto, () => ({ mark: ctx.mark, toCompact: ctx.toCompact ?? was.toCompact }))
   const crossed = ctxCrossed(before, after)
   if (crossed !== null) {
     $.ui.toast(
-      crossed >= 95
-        ? `Kokpit: konteks ${after}% hampir habis, jalankan /compact sekarang`
-        : `Kokpit: konteks sudah ${after}%, pertimbangkan /compact`,
+      ctx.toCompact !== null
+        ? crossed >= 95
+          ? `Kokpit: konteks hampir menyentuh autocompact (${after}%)`
+          : `Kokpit: konteks sudah ${after}% menuju autocompact`
+        : crossed >= 95
+          ? `Kokpit: konteks ${after}% hampir habis, jalankan /compact sekarang`
+          : `Kokpit: konteks sudah ${after}%, pertimbangkan /compact`,
     )
   }
   await update($, live, l => ({
@@ -363,8 +391,8 @@ async function refreshUsage($: EngineInterface) {
     startedAt: u.startedAt > 0 ? u.startedAt : l.startedAt,
     usd: u.cost?.usd ?? l.usd,
     hasUnknownPrice: u.cost?.hasUnknownPrice === true,
-    ctxPercent: u.context.percent ?? l.ctxPercent,
-    ctxWindow: u.context.window,
+    ctxPercent: ctx.percent ?? l.ctxPercent,
+    ctxWindow: ctx.window,
   }))
   if (u.cost) await syncDaily($, u.startedAt, u.cost.usd)
 }
@@ -676,7 +704,7 @@ export const register: Register = on => {
   // context meter and the files changed. Surfaces without Svg (the terminal) get nothing.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || e.surface === 'terminal') return next(e)
-    const [l, all, p] = await Promise.all([read($, live), read($, changes), read($, prefs)])
+    const [l, all, p, ca] = await Promise.all([read($, live), read($, changes), read($, prefs), read($, ctxAuto)])
     const f = changedFiles(all, {})
     const info = modelInfo(l.model)
     const state = bandState(l.mood, e.props.isWorking || l.isTurnRunning)
@@ -688,6 +716,8 @@ export const register: Register = on => {
       state,
       note: state === 'done' ? l.detail : '',
       ctxPercent: l.ctxPercent,
+      ctxMark: ca.mark,
+      isCtxHigh: isCtxHigh(l.ctxPercent, ca.toCompact),
       files: { count: f.files.length, added: f.added, removed: f.removed },
       // Turns, not tool calls: the line holds through a turn and changes with the next.
       quip: p.isSantai ? quipFor(state, l.turns, l.startedAt) : '',
@@ -712,6 +742,7 @@ export const register: Register = on => {
       read($, history),
       $.clock.now(),
     ])
+    const ca = await read($, ctxAuto)
     const info = modelInfo(l.model)
     const meta = MODELS[info.costume]
     const m = MOODS[l.mood]
@@ -989,8 +1020,10 @@ export const register: Register = on => {
           ctx: {
             values: [ctxText, l.ctxPercent === null ? '–' : `${l.ctxPercent}%`],
             share: l.ctxPercent === null ? null : l.ctxPercent / 100,
-            isHigh: (l.ctxPercent ?? 0) > 80,
-            tip: l.ctxPercent === null ? 'Konteks belum diketahui' : `Konteks terpakai ${ctxText} token`,
+            isHigh: isCtxHigh(l.ctxPercent, ca.toCompact),
+            tip:
+              (l.ctxPercent === null ? 'Konteks belum diketahui' : `Konteks terpakai ${ctxText} token`) +
+              (ca.mark !== null ? `\nAutocompact di ${ca.mark}%` : ''),
           },
           stats: [
             {

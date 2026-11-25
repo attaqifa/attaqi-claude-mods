@@ -69,6 +69,9 @@ export type Daily = { day: string; usd: number; seen: Record<string, number> }
 /** Spend per day across sessions, the last 14 days, by `YYYY-MM-DD`. */
 export type History = Record<string, number>
 
+/** Where auto-compaction runs as a share of the whole window, and how far toward it the context is; null when off or not known. */
+export type CtxAuto = { mark: number | null; toCompact: number | null }
+
 declare module 'claude-code' {
   interface PluginState {
     'kokpit-piksel': {
@@ -82,6 +85,7 @@ declare module 'claude-code' {
       game: Shaped<Game>
       daily: Shaped<Daily>
       history: Shaped<History>
+      ctxAuto: Shaped<CtxAuto>
     }
   }
 }

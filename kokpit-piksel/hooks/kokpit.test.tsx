@@ -5,7 +5,7 @@ import type { Mood } from '../types'
 import { bandShot, bandState } from './band'
 import { diffText } from './diff'
 import { fit, fitMiddle, measure, normalize, textPath } from './pixfont'
-import { ctxCrossed, describe as describeTool, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
+import { ctxCrossed, ctxShare, describe as describeTool, isCtxHigh, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
 import { QUIPS, quipFor } from './santai'
 import { scene } from './scene'
 import type { Costume } from './scene'
@@ -291,6 +291,23 @@ test('/kokpit ringkasan sums the session up; a filling context earns one toast p
     'Kokpit: konteks sudah 85%, pertimbangkan /compact',
     'Kokpit: konteks 96% hampir habis, jalankan /compact sekarang',
   ])
+  // The meter runs to the whole window; auto-compaction is a mark on it, and the warnings count toward that mark.
+  const auto = { isAutoCompactEnabled: true, autoCompactThreshold: 800_000 }
+  expect(ctxShare({ tokens: 400_000, window: 1_000_000, percent: 40, breakdown: auto })).toEqual({ percent: 40, window: 1_000_000, mark: 80, toCompact: 50 })
+  expect(ctxShare({ tokens: 900_000, window: 1_000_000, percent: 90, breakdown: auto })).toEqual({ percent: 90, window: 1_000_000, mark: 80, toCompact: 100 })
+  expect(ctxShare({ tokens: 400_000, window: 1_000_000, percent: 40, breakdown: { isAutoCompactEnabled: false } })).toEqual({ percent: 40, window: 1_000_000, mark: null, toCompact: null })
+  expect(ctxShare({ window: 1_000_000, breakdown: auto })).toEqual({ percent: undefined, window: 1_000_000, mark: 80, toCompact: null })
+  expect(isCtxHigh(70, 88)).toBe(true)
+  expect(isCtxHigh(85, null)).toBe(true)
+  expect(isCtxHigh(40, 50)).toBe(false)
+  const strip = { width: 1400, costume: 'opus', accent: '#7F77DD', name: 'Opus 5.5', state: 'idle', note: '', files: { count: 0, added: 0, removed: 0 } } as const
+  const marked = bandShot({ ...strip, ctxPercent: 40, ctxMark: 80, isCtxHigh: false })
+  expect(marked.alt).toBe('Opus 5.5 · Santai. Konteks 40%. Autocompact di 80%.')
+  expect(marked.source).toContain('#E8A33A')
+  expect(marked.source).not.toContain('class="sw"')
+  const past = bandShot({ ...strip, ctxPercent: 85, ctxMark: 80, isCtxHigh: true })
+  expect(past.source).toContain('#E5645F')
+  expect(past.source).toContain('class="sw"')
   expect(ctxCrossed(null, 50)).toBeNull()
   expect(ctxCrossed(70, 99)).toBe(95)
   expect(ctxCrossed(30, 12)).toBeNull()
