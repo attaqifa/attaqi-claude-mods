@@ -671,6 +671,26 @@ export const register: Register = on => {
       </Box>
     )
 
+    // Clicks inside the Svg never reach the mod, so each changed file gets a
+    // native button here: press to open its review, press again to close it.
+    const fileChips = () => (
+      <Box key="files" flexDirection="row" gap="xs" flexWrap="wrap">
+        {order.map(path => {
+          const f = byPath.get(path)
+          if (!f) return null
+          const isOpen = open?.path === path
+          return (
+            <Button
+              key={`f:${path}`}
+              label={`${baseName(path)} +${f.added} −${f.removed}${f.isChecked ? ' ✓' : ''}`}
+              variant={isOpen ? 'primary' : 'secondary'}
+              onPress={() => setOpen(isOpen ? null : path)}
+            />
+          )
+        })}
+      </Box>
+    )
+
     const card = (f: FileEntry) => {
       const warnings = f.tags.filter(t => t !== 'baru')
       return (
@@ -851,6 +871,7 @@ export const register: Register = on => {
               {listSvg}
             </Box>
           )}
+          {files.length > 0 && fileChips()}
           {files.length > 0 && reviewBar()}
           {open && card(open)}
         </Box>

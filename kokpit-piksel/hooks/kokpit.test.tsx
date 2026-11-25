@@ -111,7 +111,13 @@ test('an edit lands on the pixel screen and reviews below it, on desktop and ter
   // Given outright: left out, the desktop draws the frame about 150 pixels tall.
   expect(shot.height).toBeGreaterThan(300)
   expect(await ui.find({ type: 'Text', text: /^Opus 5\.5$/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'f:src/app.ts' })).toBeUndefined()
+  // Each changed file is a native button under the screen: press opens, press again closes.
+  expect((await ui.find({ type: 'Button', key: 'f:src/app.ts' }))?.props.label).toBe('app.ts +3 −2')
+  await ui.press({ key: 'f:src/app.ts' })
+  expect((await ui.find({ type: 'Code' }))?.text).toContain('+const d = 4')
+  expect((await ui.find({ type: 'Button', key: 'f:src/app.ts' }))?.props.variant).toBe('primary')
+  await ui.press({ key: 'f:src/app.ts' })
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
   expect(await ui.find({ type: 'Input' })).toBeUndefined()
   expect(await ui.find({ type: 'Progress' })).toBeUndefined()
 
