@@ -653,11 +653,12 @@ export const register: Register = on => {
     return r
   })
 
-  // Above the prompt: a thin pixel strip, Claude small with one word and the
-  // context meter. Surfaces without Svg (the terminal) get nothing.
+  // Above the prompt: a thin pixel strip, Claude small with one word, the
+  // context meter and the files changed. Surfaces without Svg (the terminal) get nothing.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || e.surface === 'terminal') return next(e)
-    const l = await read($, live)
+    const [l, all] = await Promise.all([read($, live), read($, changes)])
+    const f = changedFiles(all, {})
     const info = modelInfo(l.model)
     const state = bandState(l.mood, e.props.isWorking || l.isTurnRunning)
     const shot = bandShot({
@@ -668,6 +669,7 @@ export const register: Register = on => {
       state,
       note: state === 'done' ? l.detail : '',
       ctxPercent: l.ctxPercent,
+      files: { count: f.files.length, added: f.added, removed: f.removed },
     })
     const { Svg } = $.ui.resolve(e)
     // A plain image: no frame to reload, so a change swaps the picture.

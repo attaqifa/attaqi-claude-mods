@@ -330,24 +330,34 @@ test('the strip above the prompt: Claude small, one word, the context; still thr
   // As wide as what it says, left-aligned, never past the band.
   expect(at.width).toBeLessThan(400)
   expect(at.source).not.toContain('<script')
+  // Resting: the zzz, no dots, no sweat, no files yet.
+  expect(at.source).toContain('class="zz1"')
+  expect(at.source).not.toContain('class="bk1"')
+  expect(at.source).not.toContain('class="sw"')
   await idle.unmount()
 
-  // Through a turn, reading then editing then running draw one and the same strip.
+  // Through a turn the tools draw one and the same strip; only an edit adds its file.
   const busy = await $.ui.mount(BAND('desktop', { isWorking: true }))
   const first = await strip(busy)
   expect(first.alt).toBe('Opus 5.5 · Bekerja. Konteks 12%.')
+  expect(first.source).toContain('class="bk1"')
+  expect(first.source).not.toContain('class="zz1"')
   await $.tool.call({ tool: 'Read', file_path: FILE })
-  await $.tool.call({ tool: 'Edit', file_path: FILE, old_string: 'const b = 2', new_string: 'const b = 20' })
-  await $.tool.call({ tool: 'Bash', command: 'npm test' })
   expect((await strip(busy)).source).toBe(first.source)
+  await $.tool.call({ tool: 'Edit', file_path: FILE, old_string: 'const b = 2', new_string: 'const b = 20' })
+  const edited = await strip(busy)
+  expect(edited.alt).toMatch(/^Opus 5\.5 · Bekerja\. Konteks 12%\. 1 file berubah, \+\d+ −\d+\.$/)
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  expect((await strip(busy)).source).toBe(edited.source)
   await busy.unmount()
 
-  // A context near full turns the meter amber.
+  // A context near full turns the meter amber and Claude sweats.
   world.ctx.percent = 85
   await $.command.run(typed('ringkasan'))
   const full = await $.ui.mount(BAND('desktop'))
   expect((await strip(full)).alt).toContain('Konteks 85%')
   expect((await strip(full)).source).toContain('#E8A33A')
+  expect((await strip(full)).source).toContain('class="sw"')
   await full.unmount()
 
   // Nothing where Svg is not drawn, nor over a survey.
@@ -364,7 +374,8 @@ test('the strip: every costume and state fits, the turn note after Selesai', () 
   for (const costume of costumes) {
     for (const state of ['idle', 'work', 'done', 'err'] as const) {
       for (const width of [100, 400, 1400]) {
-        const s = bandShot({ width, costume, accent: '#7F77DD', name: 'Sonnet 5.5', state, note: '42 dtk · Rp1.200', ctxPercent: 100 })
+        const files = { count: 12, added: 340, removed: 25 }
+        const s = bandShot({ width, costume, accent: '#7F77DD', name: 'Sonnet 5.5', state, note: '42 dtk · Rp1.200', ctxPercent: 100, files })
         expect(s.source.length).toBeLessThan(SVG_LIMIT)
         expect(s.height).toBe(21)
         expect(Number.isInteger(s.width)).toBe(true)
@@ -372,8 +383,12 @@ test('the strip: every costume and state fits, the turn note after Selesai', () 
       }
     }
   }
-  expect(bandShot({ width: 560, costume: 'opus', accent: '#7F77DD', name: 'Opus 5.5', state: 'done', note: '42 dtk · Rp1.200', ctxPercent: null }).alt).toBe(
+  const done = { width: 560, costume: 'opus', accent: '#7F77DD', name: 'Opus 5.5', state: 'done', note: '42 dtk · Rp1.200', ctxPercent: null } as const
+  expect(bandShot({ ...done, files: { count: 0, added: 0, removed: 0 } }).alt).toBe(
     'Opus 5.5 · Selesai · 42 dtk · Rp1.200. Konteks belum diketahui.',
+  )
+  expect(bandShot({ ...done, files: { count: 3, added: 42, removed: 7 } }).alt).toBe(
+    'Opus 5.5 · Selesai · 42 dtk · Rp1.200. Konteks belum diketahui. 3 file berubah, +42 −7.',
   )
   expect(bandState('write', true)).toBe('work')
   expect(bandState('think', false)).toBe('idle')
