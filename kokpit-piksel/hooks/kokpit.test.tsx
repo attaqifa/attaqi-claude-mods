@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 import type { Mood } from '../types'
 import { diffText } from './diff'
 import { fit, fitMiddle, measure, normalize, textPath } from './pixfont'
-import { describe as describeTool, modelInfo, riskOf, rupiah, short, tagsFor, treeRows } from './register'
+import { describe as describeTool, modelInfo, riskOf, rupiah, short, sparkline, tagsFor, treeRows } from './register'
 import { scene } from './scene'
 import type { Costume } from './scene'
 import { SVG_LIMIT, screens } from './screen'
@@ -262,6 +262,25 @@ test('/kokpit kurs sets the rate; no daily limit is left anywhere', async ($, on
   expect(await term.find({ type: 'Progress' })).toBeUndefined()
   expect(await term.find({ type: 'Input' })).toBeUndefined()
   await term.unmount()
+})
+
+test('the last seven days show as bars, kept across sessions in the store', async ($, on) => {
+  const world = engine(on)
+  world.store.set('history', { '2026-11-24': 1, '2026-11-01': 9 })
+  await $.session.start({ cwd: '/proj', surface: 'desktop', isInteractive: true })
+  expect(world.store.get('history')).toEqual({ '2026-11-25': 0.25, '2026-11-24': 1, '2026-11-01': 9 })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const screen = (await pixelScreen(ui)).source
+  expect(screen).toContain('7 hari terakhir Rp20.500')
+  expect(screen).toContain('Sel 24/11: Rp16.400')
+  expect(screen).toContain('Rab 25/11: Rp4.100')
+  await ui.unmount()
+
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await term.find({ type: 'Text', text: /^7 hari / }))?.text).toBe('7 hari ·····█▂ Rp20.500')
+  await term.unmount()
+  expect(sparkline([0, 1, 8])).toBe('·▁█')
 })
 
 test('the pixel screen fits long inputs in both layouts and stays under the Svg limit', () => {

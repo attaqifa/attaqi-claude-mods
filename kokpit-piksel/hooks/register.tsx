@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Change, Cmd, Daily, Focus, Game, Live, Mood, Prefs, Ui } from '../types'
+import type { Change, Cmd, Daily, Focus, Game, History, Live, Mood, Prefs, Ui } from '../types'
 import { diffText } from './diff'
 import { ROOM, scene } from './scene'
 import type { Costume, SceneInput } from './scene'
@@ -44,6 +44,7 @@ const prefs = atom({ plugin: 'kokpit-piksel', key: 'prefs' } as const, { kurs: 1
 const game = atom({ plugin: 'kokpit-piksel', key: 'game' } as const, { xp: 0, lv: 1 } as Game, { shape: 'game-1' })
 const NO_DAY: Daily = { day: '', usd: 0, seen: {} }
 const daily = atom({ plugin: 'kokpit-piksel', key: 'daily' } as const, NO_DAY, { shape: 'daily-3' })
+const history = atom({ plugin: 'kokpit-piksel', key: 'history' } as const, {} as History, { shape: 'history-1' })
 
 // ---------- words and numbers ----------
 
@@ -303,6 +304,33 @@ async function syncDaily($: EngineInterface, sessionStartedAt: number, sessionUs
   }
   await $.store.set('daily', next)
   await update($, daily, () => next)
+
+  // The same total goes into the history, read fresh too, keeping 14 days.
+  const kept = await $.store.get('history').catch(() => undefined)
+  const old: History = isHistory(kept) ? kept : {}
+  const hist = Object.fromEntries(
+    Object.entries({ ...old, [today]: next.usd })
+      .sort(([a], [b]) => (a < b ? 1 : -1))
+      .slice(0, HISTORY_DAYS),
+  )
+  await $.store.set('history', hist)
+  await update($, history, () => hist)
+}
+
+const HISTORY_DAYS = 14
+
+const isHistory = (v: unknown): v is History =>
+  typeof v === 'object' && v !== null && Object.values(v).every(x => typeof x === 'number')
+
+/** The last `n` days up to `now`, oldest first, with what each cost. */
+export function lastDays(h: History, now: number, n: number) {
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(now)
+    d.setHours(12, 0, 0, 0)
+    d.setDate(d.getDate() - (n - 1 - i))
+    const key = dayKey(d.getTime())
+    return { key, date: d, usd: h[key] ?? 0 }
+  })
 }
 
 async function refreshUsage($: EngineInterface) {
@@ -327,6 +355,13 @@ async function readFile($: EngineInterface, path: string): Promise<{ exists: boo
   }
 }
 
+/** Values as block bars, ▁ to █; an empty day is a low dot. */
+export function sparkline(values: number[]) {
+  const top = Math.max(0, ...values)
+  const BARS = '▁▂▃▄▅▆▇█'
+  return values.map(v => (v <= 0 || top <= 0 ? '·' : BARS[Math.max(0, Math.ceil((v / top) * BARS.length) - 1)])).join('')
+}
+
 // ---------- the mod ----------
 
 export const register: Register = on => {
@@ -338,7 +373,12 @@ export const register: Register = on => {
       argumentHint: '[kurs 16400]',
     })
 
-    const [savedPrefs, savedGame] = await Promise.all([$.store.get('prefs'), $.store.get('game')])
+    const [savedPrefs, savedGame, savedHistory] = await Promise.all([
+      $.store.get('prefs'),
+      $.store.get('game'),
+      $.store.get('history').catch(() => undefined),
+    ])
+    if (isHistory(savedHistory)) await update($, history, () => savedHistory)
     // An older save may still carry a daily limit beside the rate: only the rate is kept.
     const isPrefs = (v: unknown): v is Prefs => typeof v === 'object' && v !== null && typeof (v as Prefs).kurs === 'number'
     const isGame = (v: unknown): v is Game =>
@@ -516,7 +556,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Code } = $.ui.resolve(e)
-    const [l, all, ok, commands, fo, view, p, g, d, now] = await Promise.all([
+    const [l, all, ok, commands, fo, view, p, g, d, hist, now] = await Promise.all([
       read($, live),
       read($, changes),
       read($, checked),
@@ -526,6 +566,7 @@ export const register: Register = on => {
       read($, prefs),
       read($, game),
       read($, daily),
+      read($, history),
       $.clock.now(),
     ])
     const info = modelInfo(l.model)
@@ -535,6 +576,14 @@ export const register: Register = on => {
     const rpShort = (usd: number) => `Rp${short(Math.round(usd * p.kurs))}`
     const todayUsd = d.day === dayKey(now) ? d.usd : 0
     const tokensTotal = l.tokens.input + l.tokens.output + l.tokens.cacheRead + l.tokens.cacheWrite
+    // The last seven days, today's bar from the same figure as "Hari ini".
+    const DAY_NAMES = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab']
+    const week = lastDays(hist, now, 7).map((x, i, list) => {
+      const isToday = i === list.length - 1
+      const usd = isToday ? todayUsd : x.usd
+      return { usd, isToday, tip: `${DAY_NAMES[x.date.getDay()]} ${x.date.getDate()}/${x.date.getMonth() + 1}: ${rp(usd)}` }
+    })
+    const weekUsd = week.reduce((n, x) => n + x.usd, 0)
 
     // Files: newest change first, one entry per file.
     const byFile = new Map<string, Change[]>()
@@ -819,6 +868,11 @@ export const register: Register = on => {
               isMoney: true,
             },
           ],
+          week: {
+            bars: week.map(x => ({ value: x.usd, isToday: x.isToday, tip: x.tip })),
+            values: [rp(weekUsd), rpShort(weekUsd)],
+            tip: `7 hari terakhir ${rp(weekUsd)}, semua sesi\n${priceNote}`,
+          },
         },
         files: { rows, added: totalAdded, removed: totalRemoved, hasChanges: files.length > 0, more },
         cmds: cmdRows,
@@ -955,6 +1009,11 @@ export const register: Register = on => {
           {stat('Sesi', rp(l.usd))}
           {stat('Hari ini', rp(todayUsd))}
         </Box>
+        <Text wrap="truncate-end">
+          <Text dimColor>7 hari </Text>
+          <Text color="warning">{sparkline(week.map(x => x.usd))}</Text>
+          <Text dimColor> {rp(weekUsd)}</Text>
+        </Text>
         <Text dimColor size="caption" wrap="wrap">
           Estimasi harga API · kurs {rupiah(p.kurs)}/$
         </Text>

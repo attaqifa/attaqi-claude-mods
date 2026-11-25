@@ -28,6 +28,8 @@ export type Hud = {
   isRunning: boolean
   ctx: { values: string[]; share: number | null; isHigh: boolean; tip: string }
   stats: [Stat, Stat, Stat]
+  /** Spend per day, oldest first, today last; drawn as little bars. */
+  week?: { bars: { value: number; isToday: boolean; tip: string }[]; values: string[]; tip: string }
 }
 
 export type FileRow =
@@ -190,6 +192,42 @@ function hudSection(o: string[], x: number, y: number, w: number, h: Hud, accent
     o.push(zone(sx - 3, cy - 2, colW + 6, LINE * 2 + 2, st.tip))
   })
   cy += LINE * 2 + 4
+
+  if (h.week && h.week.bars.length > 0) cy += weekSection(o, x, cy, w, h.week)
+  return cy - y
+}
+
+/** The last days' spend as a row of bars, the tallest day full height. */
+function weekSection(o: string[], x: number, y: number, w: number, week: NonNullable<Hud['week']>): number {
+  let cy = y
+  o.push(dots(x + P, cy, w - P * 2))
+  cy += 6
+  o.push(pixText('7 hari', x + P, cy, INK.dim))
+  const value = pick(week.values, w - P * 2 - measure('7 hari') - 8)
+  o.push(pixText(value, x + w - P - measure(value), cy, INK.gold))
+  o.push(zone(x, cy - 2, w, LINE, week.tip))
+  cy += LINE + 1
+
+  const BAR_H = 12
+  const gap = 2
+  const n = week.bars.length
+  const bw = Math.floor((w - P * 2 - gap * (n - 1)) / n)
+  const bx = x + P + Math.floor((w - P * 2 - (n * bw + gap * (n - 1))) / 2)
+  const top = Math.max(0, ...week.bars.map(b => b.value))
+  const base: Box4[] = []
+  const past: Box4[] = []
+  const today: Box4[] = []
+  week.bars.forEach((b, i) => {
+    const sx = bx + i * (bw + gap)
+    const bh = b.value > 0 && top > 0 ? Math.max(1, Math.round((b.value / top) * BAR_H)) : 0
+    base.push([sx, cy + BAR_H, bw, 1])
+    if (bh > 0) (b.isToday ? today : past).push([sx, cy + BAR_H - bh, bw, bh])
+  })
+  o.push(rects(base, INK.empty))
+  o.push(rects(past, INK.folderDim))
+  o.push(rects(today, INK.gold))
+  week.bars.forEach((b, i) => o.push(zone(bx + i * (bw + gap) - 1, cy - 1, bw + 2, BAR_H + 3, b.tip)))
+  cy += BAR_H + 6
   return cy - y
 }
 

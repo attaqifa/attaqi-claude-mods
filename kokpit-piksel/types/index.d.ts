@@ -66,6 +66,9 @@ export type Game = { xp: number; lv: number }
 /** Today's spend across sessions; `seen` holds each session's dollars already counted, by its start time. */
 export type Daily = { day: string; usd: number; seen: Record<string, number> }
 
+/** Spend per day across sessions, the last 14 days, by `YYYY-MM-DD`. */
+export type History = Record<string, number>
+
 declare module 'claude-code' {
   interface PluginState {
     'kokpit-piksel': {
@@ -78,6 +81,7 @@ declare module 'claude-code' {
       prefs: Shaped<Prefs>
       game: Shaped<Game>
       daily: Shaped<Daily>
+      history: Shaped<History>
     }
   }
 }
